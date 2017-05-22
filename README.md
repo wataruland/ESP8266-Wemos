@@ -5,11 +5,17 @@ Probando GitHub en base al proyecto creado por squix78 "esp8266-weather-station"
 Librerias necesarias
 
   ESP8266 Weather Station
+  
   Json Streaming Parser (by Daniel Eichhorn)
+  
   ESP8266 Oled Driver for SSD1306 display (by me as well). Make sure that you use Version 3.0.0 or bigger!
+  
   WifiManager
+  
   Adafruit_Sensor
+  
   Adafruit_NeoPixel
+  
   DHT_sensor_library
 
 
