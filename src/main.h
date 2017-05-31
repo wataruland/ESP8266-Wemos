@@ -2,49 +2,53 @@
 #define MAIN_H
 
 #include <Arduino.h>
+#include <Adafruit_GFX.h>    // Core graphics library
+#include "ILI9341.h"         // Hardware-specific library
+#include <SPI.h>
+// Additional UI functions
+#include "GfxUi.h"
+
+// Fonts created by http://oleddisplay.squix.ch/
+#include "ArialRoundedMTBold_14.h"
+#include "ArialRoundedMTBold_36.h"
+
+// Download helper
+#include "WebResource.h"
 
 #include <ESP8266WiFi.h>
-#include <Ticker.h>
-#include <JsonListener.h>
 #include <ArduinoOTA.h>
 #include <ESP8266mDNS.h>
-
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
+
+// Helps with connecting to internet
 #include <WiFiManager.h>
 
-#include "SSD1306Wire.h"
-#include "OLEDDisplayUi.h"
-#include "Wire.h"
-#include "WundergroundClient.h"
-#include "WeatherStationFonts.h"
-#include "WeatherStationImages.h"
+// check settings.h for adapting to your needs
+#include "settings.h"
+#include <JsonListener.h>
+#include <WundergroundClient.h>
 #include "TimeClient.h"
-#include "ThingspeakClient.h"
-#include "Adafruit_Sensor.h"
-#include "DHT.h"
 
-#include <Adafruit_NeoPixel.h>
-#ifdef __AVR__
-  #include <avr/power.h>
-#endif
-
-#include <datos.h>
 
 //declaring prototypes
 void configModeCallback (WiFiManager *myWiFiManager);
-void drawProgress(OLEDDisplay *display, int percentage, String label);
-void drawOtaProgress(unsigned int, unsigned int);
-void updateData(OLEDDisplay *display);
-void drawDateTime(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
-void drawCurrentWeather(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
-void drawForecast(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
-void drawSensoresCasa(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
-void drawThingspeak(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
-void drawForecastDetails(OLEDDisplay *display, int x, int y, int dayIndex);
-void drawHeaderOverlay(OLEDDisplay *display, OLEDDisplayUiState* state);
-void drawDormir(OLEDDisplay *display);
-void setReadyForWeatherUpdate();
-int8_t getWifiQuality();
+void downloadCallback(String filename, int16_t bytesDownloaded, int16_t bytesTotal);
+ProgressCallback _downloadCallback = downloadCallback;
+void downloadResources();
+void updateData();
+void updatePantalla();
+void drawProgress(uint8_t percentage, String text);
+void drawTime();
+void drawCurrentWeather();
+void drawForecast();
+void drawForecastSensores();
+void drawForecastDetail(uint16_t x, uint16_t y, uint8_t dayIndex);
+void drawForecastDetailSensores(uint16_t, uint16_t, uint8_t);
+void drawDormir();
+void drawScrollBorrar();
+String getMeteoconIcon(String iconText);
+void drawAstronomy();
+void drawSeparator(uint16_t y);
 
 #endif
