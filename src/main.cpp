@@ -362,14 +362,9 @@ void drawForecastDetailSensores(uint16_t x, uint16_t y, uint8_t SensorIndex) // 
   ui.drawString(x + 25, y, TipoSensor);
 
   ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
-
+  tft.setFont(&ArialRoundedMTBold_36);
+  ui.setTextAlignment(CENTER);
   ui.drawString(x + 25, y + 14, TipoMedida);
-  int icono = 24 * SensorIndex / 30.0;
-  ui.drawBmp("/moon" + String(icono) + ".bmp", x, y + 15);
-
-
-  String weatherIcon = getMeteoconIcon(wunderground.getForecastIcon(1));
-  ui.drawBmp("/mini/" + weatherIcon + ".bmp", x, y + 15);
 }
 //------------------------------------- -------------------------------------//
 void drawAstronomy() // draw moonphase and sunrise/set and moonrise/set
