@@ -39,7 +39,7 @@ int  Pantalla             = 0;
 void setup()
 {
   Serial.begin(115200);
-
+  randomSeed(analogRead(0));
   // The LED pin needs to set HIGH
   // Use this pin to save energy
   pinMode(LED_PIN, OUTPUT);
@@ -149,6 +149,7 @@ void loop()
 
 }
 //------------------------------------- -------------------------------------//
+
 
 //------------------------------------- -------------------------------------//
 void configModeCallback (WiFiManager *myWiFiManager) // Called if WiFi has not been configured yet
@@ -308,8 +309,8 @@ void drawForecast() // draws the three forecast columns
 //------------------------------------- -------------------------------------//
 void drawForecastSensores() // Escribe pantalla sensores internos
 {
-  drawForecastDetailSensores(40,  100, 0); // Temperatura
-  drawForecastDetailSensores(150, 100, 1); // Humedad
+  drawForecastDetailSensores(40,  120, 0); // Temperatura
+  drawForecastDetailSensores(150, 120, 1); // Humedad
   drawForecastDetailSensores(40 , 220, 2); // CO2
   drawForecastDetailSensores(150, 220, 3); // Presion
   drawSeparator(165 + 65 + 10);
@@ -333,26 +334,45 @@ void drawForecastDetail(uint16_t x, uint16_t y, uint8_t dayIndex) // helper for 
 //------------------------------------- -------------------------------------//
 void drawForecastDetailSensores(uint16_t x, uint16_t y, uint8_t SensorIndex) // Lectura y escritura sensores internos
 {
-  String TipoSensor = "";
-  String TipoMedida = "";
+  String TipoSensor  = "";
+  String TipoMedida  = "";
+  String ValorMedida = "";
+  uint16_t Color     = ILI9341_BLACK;
+  int ValorLectura   = 0;
+
+  //ValorLectura = LecturaSensor(SensorIndex) ;
 
   switch(SensorIndex)
    {
-     case 0 : TipoSensor = "Temperatura";
-              TipoMedida = " ºC.";
+     case 0 : TipoSensor   = "Temperatura";
+              TipoMedida   = " ºC";
+              ValorLectura = random(-5, 40);              
+              if (ValorLectura <= 0)                       Color = ILI9341_WHITE;
+              if (ValorLectura >  0 && ValorLectura <=  7) Color = ILI9341_YELLOW;
+              if (ValorLectura >  7 && ValorLectura <= 14) Color = ILI9341_GREENYELLOW;
+              if (ValorLectura > 14 && ValorLectura <= 21) Color = ILI9341_GREEN;
+              if (ValorLectura > 21 && ValorLectura <= 28) Color = ILI9341_BLUE;
+              if (ValorLectura > 28 && ValorLectura <= 35) Color = ILI9341_ORANGE;
+              if (ValorLectura > 35)                       Color = ILI9341_RED;
               break;
-     case 1 : TipoSensor = "Humedad";
-              TipoMedida = " %h.";
+     case 1 : TipoSensor   = "Humedad";
+              TipoMedida   = " %h";
+              ValorLectura = random(0, 100);
+              Color        = ILI9341_BLUE;
               break;
-     case 2 : TipoSensor = " CO2 ";
-              TipoMedida = " CO2";
+     case 2 : TipoSensor   = " CO2 ";
+              TipoMedida   = " CO2";
+              ValorLectura = random(0, 100);
+              Color        = ILI9341_LIGHTGREY;
               break;
-     case 3 : TipoSensor = " Presion";
-              TipoMedida = " hPa";
+     case 3 : TipoSensor   = " Presion";
+              TipoMedida   = " hPa";
+              ValorLectura = random(0, 100);
+              Color        = ILI9341_CYAN;
               break;
    }
   //TipoMedida = LecturaSensor(SensorIndex) + TipoMedida;
-  TipoMedida = "25" + TipoMedida;
+  ValorMedida = (String) ValorLectura;
 
 
   ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
@@ -361,10 +381,15 @@ void drawForecastDetailSensores(uint16_t x, uint16_t y, uint8_t SensorIndex) // 
   TipoSensor.toUpperCase();
   ui.drawString(x + 25, y, TipoSensor);
 
-  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  ui.setTextColor(Color, ILI9341_BLACK);
   tft.setFont(&ArialRoundedMTBold_36);
   ui.setTextAlignment(CENTER);
-  ui.drawString(x + 25, y + 14, TipoMedida);
+  ui.drawString(x + 12, y + 35, ValorMedida);
+
+  ui.setTextColor(Color, ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  ui.setTextAlignment(LEFT);
+  ui.drawString(x + 12 + 21, y + 35, TipoMedida);
 }
 //------------------------------------- -------------------------------------//
 void drawAstronomy() // draw moonphase and sunrise/set and moonrise/set
