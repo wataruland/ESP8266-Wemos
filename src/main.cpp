@@ -1,17 +1,13 @@
 /**The MIT License (MIT)
-
-Copyright (c) 2016 by Daniel Eichhorn
-
+Copyright (c) 2015 by Daniel Eichhorn
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
-
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
-
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -19,146 +15,109 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
 See more at http://blog.squix.ch
 */
 
-#include <main.h>
-/***************************
- * Inicializando componentes
- **************************/
+#include "main.h"
+/*****************************
+ * Important: see settings.h to configure your settings!!!
+ * ***************************/
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC);
+GfxUi ui = GfxUi(&tft);
 
-// Initialize the oled display for address 0x3c
-// sda-pin=14 and sdc-pin=12
-SSD1306Wire     display(I2C_DISPLAY_ADDRESS, SDA_PIN, SDC_PIN);
-OLEDDisplayUi   ui( &display );
-
-DHT dht(DHT_PIN, DHTTYPE);
-
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(8, NEO_PIN, NEO_GRB + NEO_KHZ800);
-
+WebResource webResource;
 TimeClient timeClient(UTC_OFFSET);
 
 // Set to false, if you prefere imperial/inches, Fahrenheit
 WundergroundClient wunderground(IS_METRIC);
 
-//De momento no lo usaremos
-ThingspeakClient thingspeak;
-
-Ticker ticker;
-
-/***************************
- * Fin Inicializando componentes
- **************************/
-
-// Add frames
-// this array keeps function pointers to all frames
-// frames are the single views that slide from right to left
-//FrameCallback frames[] = { drawDateTime, drawCurrentWeather, drawForecast, drawEnCasa, drawThingspeak };
-//int numberOfFrames = 5;
-
-FrameCallback frames[] = { drawDateTime, drawCurrentWeather, drawForecast, drawSensoresCasa };
-int numberOfFrames     = 4;
-
-OverlayCallback overlays[] = { drawHeaderOverlay };
-int numberOfOverlays = 1;
+long lastDownloadUpdate   = millis();
+long lastDrew             = 0;
+long lastDownloadPantalla = millis();
+int  Pantalla             = 0;
 //------------------------------------- -------------------------------------//
 void setup()
 {
-    // Turn On VCC
-  pinMode(D4, OUTPUT);
-  digitalWrite(D4, HIGH);
   Serial.begin(115200);
 
-  // initialize dispaly
-  display.init();
-  display.clear();
-  display.display();
+  // The LED pin needs to set HIGH
+  // Use this pin to save energy
+  pinMode(LED_PIN, OUTPUT);
+  //digitalWrite(LED_PIN, LOW);
+  digitalWrite(LED_PIN, HIGH);
 
-  //display.flipScreenVertically();
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setContrast(255);
-
+  tft.begin();
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  ui.setTextAlignment(CENTER);
+  ui.drawString(120, 160, "Connecting to WiFi");
 
   //WiFiManager
   //Local intialization. Once its business is done, there is no need to keep it around
-  //WiFiManager wifiManager;
+  WiFiManager wifiManager;
   // Uncomment for testing wifi manager
-  // wifiManager.resetSettings();
-  //wifiManager.setAPCallback(configModeCallback);
+  //wifiManager.resetSettings();
+  wifiManager.setAPCallback(configModeCallback);
 
   //or use this for auto generated name ESP + ChipID
-  //wifiManager.autoConnect();
+  wifiManager.autoConnect();
 
   //Manual Wifi
-  WiFi.begin(WIFI_SSID, WIFI_PWD);
+  //WiFi.begin(WIFI_SSID, WIFI_PWD);
+
+  // OTA Setup
   String hostname(HOSTNAME);
   hostname += String(ESP.getChipId(), HEX);
   WiFi.hostname(hostname);
-
-
-  int counter = 0;
-  while (WiFi.status() != WL_CONNECTED)
-   {
-     delay(500);
-     Serial.print(".");
-     display.clear();
-     display.drawString(64, 10, "Connecting to WiFi");
-     display.drawXbm(46, 30, 8, 8, counter % 3 == 0 ? activeSymbol : inactiveSymbol);
-     display.drawXbm(60, 30, 8, 8, counter % 3 == 1 ? activeSymbol : inactiveSymbol);
-     display.drawXbm(74, 30, 8, 8, counter % 3 == 2 ? activeSymbol : inactiveSymbol);
-     display.display();
-
-     counter++;
-   }
-
-  ui.setTargetFPS(30);
-
-  //Hack until disableIndicator works:
-  //Set an empty symbol
-  ui.setActiveSymbol(emptySymbol);
-  ui.setInactiveSymbol(emptySymbol);
-
-  ui.disableIndicator();
-
-  // You can change the transition that is used
-  // SLIDE_LEFT, SLIDE_RIGHT, SLIDE_TOP, SLIDE_DOWN
-  ui.setFrameAnimation(SLIDE_LEFT);
-
-  ui.setFrames(frames, numberOfFrames);
-
-  ui.setOverlays(overlays, numberOfOverlays);
-
-  // Inital UI takes care of initalising the display too.
-  ui.init();
-
-  // Setup OTA
-  Serial.println("Hostname: " + hostname);
   ArduinoOTA.setHostname((const char *)hostname.c_str());
-  ArduinoOTA.onProgress(drawOtaProgress);
   ArduinoOTA.begin();
+  SPIFFS.begin();
 
-  updateData(&display);
+  //Uncomment if you want to update all internet resources
+  //SPIFFS.format();
 
-  ticker.attach(UPDATE_INTERVAL_SECS, setReadyForWeatherUpdate);
+  // download images from the net. If images already exist don't download
+  downloadResources();
+
+  // load the weather information
+  updateData();
 }
 //------------------------------------- -------------------------------------//
 void loop()
 {
+  // Handle OTA update requests
+  ArduinoOTA.handle();
+
   // Lo usaremos para poner el ESP en reposo si esta ha oscuras un determinado
   // tiempo, pendiente, hay que poner una resistencia entre RST y D0
-  int NivelLuz = analogRead(LUZ_PIN);
+  // int NivelLuz = analogRead(LUZ_PIN);
+  int NivelLuz     = 30;
+
+  delay_timer  = millis();
 
   if (NivelLuz < NOCHE)
    {
-     if (OSCURIDAD_timer == 0) OSCURIDAD_timer = millis();
-     if (OSCURIDAD_timer > 50*60000 && ui.getUiState()->frameState == FIXED)
+     if (OSCURIDAD_timer == 0)
       {
-        drawDormir(&display);              // Pantalla de aviso;
-        OSCURIDAD_timer = 0;
-        ESP.deepSleep(Tiempo_Dormir * 1000000,  WAKE_RF_DEFAULT);
-        delay(1000);
+        OSCURIDAD_timer = delay_timer;
+        Serial.print("OSCURIDAD_timer : ");
+        Serial.println(OSCURIDAD_timer);
+      }
+     else
+      {
+         OSCURIDAD_timer = delay_timer - OSCURIDAD_timer;
+         Serial.print("OSCURIDAD_timer total : ");
+         Serial.println(OSCURIDAD_timer);
+         if (OSCURIDAD_timer > Tiempo_Activo * 1000)
+          {
+            drawDormir();               // Pantalla de aviso;
+            delay(3000);
+            OSCURIDAD_timer = 0;
+            //Serial.println("Modo SLEEP");
+            ESP.deepSleep(Tiempo_Dormir * 1000000,  WAKE_RF_DEFAULT);
+            delay(1000);
+          }
       }
    }
   else
@@ -166,222 +125,339 @@ void loop()
      OSCURIDAD_timer = 0;
    }
 
-  if (readyForWeatherUpdate && ui.getUiState()->frameState == FIXED)
+
+  // Check if we should update the clock
+  if (millis() - lastDrew > 30000 && wunderground.getSeconds() == "00")
    {
-     updateData(&display);
+     drawTime();
+     lastDrew = millis();
    }
 
-  int remainingTimeBudget = ui.update();
-
-  if (remainingTimeBudget > 0)
+  // Check if we should update weather information
+  if (millis() - lastDownloadUpdate > 1000 * UPDATE_INTERVAL_SECS)
    {
-    // You can do some work here
-    // Don't do stuff if you are below your
-    // time budget.
-    ArduinoOTA.handle();
-    delay(remainingTimeBudget);
-  }
+     updateData();
+     lastDownloadUpdate = millis();
+   }
+
+   // Cambio de pantalla
+   if (millis() - lastDownloadPantalla > 1000 * UPDATE_PANTALLA_SECS)
+    {
+      updatePantalla();
+      lastDownloadPantalla = millis();
+    }
+
 }
 //------------------------------------- -------------------------------------//
-void configModeCallback (WiFiManager *myWiFiManager)
+
+//------------------------------------- -------------------------------------//
+void configModeCallback (WiFiManager *myWiFiManager) // Called if WiFi has not been configured yet
 {
-  Serial.println("Entered config mode");
-  Serial.println(WiFi.softAPIP());
-  //if you used auto generated SSID, print it
-  Serial.println(myWiFiManager->getConfigPortalSSID());
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(64, 10, "Wifi Manager");
-  display.drawString(64, 20, "Please connect to AP");
-  display.drawString(64, 30, myWiFiManager->getConfigPortalSSID());
-  display.drawString(64, 40, "To setup Wifi Configuration");
-  display.display();
+  ui.setTextAlignment(CENTER);
+  tft.setFont(&ArialRoundedMTBold_14);
+  tft.setTextColor(ILI9341_ORANGE);
+  ui.drawString(120, 28, "Wifi Manager");
+  ui.drawString(120, 42, "Please connect to AP");
+  tft.setTextColor(ILI9341_WHITE);
+  ui.drawString(120, 56, myWiFiManager->getConfigPortalSSID());
+  tft.setTextColor(ILI9341_ORANGE);
+  ui.drawString(120, 70, "To setup Wifi Configuration");
 }
 //------------------------------------- -------------------------------------//
-void drawProgress(OLEDDisplay *display, int percentage, String label)
-{
-  display->clear();
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(ArialMT_Plain_10);
-  display->drawString(64, 10, label);
-  display->drawProgressBar(2, 28, 124, 10, percentage);
-  display->display();
+void downloadCallback(String filename, int16_t bytesDownloaded, int16_t bytesTotal)
+{ // callback called during download of files. Updates progress bar
+  Serial.println(String(bytesDownloaded) + " / " + String(bytesTotal));
+
+  int percentage = 100 * bytesDownloaded / bytesTotal;
+  if (percentage == 0)
+   {
+     ui.drawString(120, 160, filename);
+   }
+  if (percentage % 5 == 0)
+   {
+     ui.setTextAlignment(CENTER);
+     ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+     //ui.drawString(120, 160, String(percentage) + "%");
+     ui.drawProgressBar(10, 165, 240 - 20, 15, percentage, ILI9341_WHITE, ILI9341_BLUE);
+   }
 }
 //------------------------------------- -------------------------------------//
-void drawOtaProgress(unsigned int progress, unsigned int total)
+void downloadResources() // Download the bitmaps
 {
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(64, 10, "OTA Update");
-  display.drawProgressBar(2, 28, 124, 10, progress / (total / 100));
-  display.display();
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  char id[5];
+  for (int i = 0; i < 21; i++)
+   {
+     sprintf(id, "%02d", i);
+     tft.fillRect(0, 120, 240, 40, ILI9341_BLACK);
+     webResource.downloadFile("http://www.squix.org/blog/wunderground/" + wundergroundIcons[i] + ".bmp", wundergroundIcons[i] + ".bmp", _downloadCallback);
+   }
+  for (int i = 0; i < 21; i++)
+   {
+     sprintf(id, "%02d", i);
+     tft.fillRect(0, 120, 240, 40, ILI9341_BLACK);
+     webResource.downloadFile("http://www.squix.org/blog/wunderground/mini/" + wundergroundIcons[i] + ".bmp", "/mini/" + wundergroundIcons[i] + ".bmp", _downloadCallback);
+   }
+  for (int i = 0; i < 24; i++)
+   {
+     tft.fillRect(0, 120, 240, 40, ILI9341_BLACK);
+     webResource.downloadFile("http://www.squix.org/blog/moonphase_L" + String(i) + ".bmp", "/moon" + String(i) + ".bmp", _downloadCallback);
+   }
 }
 //------------------------------------- -------------------------------------//
-void updateData(OLEDDisplay *display)
+void updateData() // Update the internet based information and update screen
 {
-  drawProgress(display, 10, "Updating time...");
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  drawProgress(20, "Updating time...");
   timeClient.updateTime();
-  drawProgress(display, 30, "Updating conditions...");
+  drawProgress(50, "Updating conditions...");
   wunderground.updateConditions(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
-  drawProgress(display, 50, "Updating forecasts...");
+  drawProgress(70, "Updating forecasts...");
   wunderground.updateForecast(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
-  //De momento no lo usaremos
-  //drawProgress(display, 80, "Updating thingspeak...");
-  //thingspeak.getLastChannelItem(THINGSPEAK_CHANNEL_ID, THINGSPEAK_API_READ_KEY);
-  drawProgress(display, 80, "Updating sensores...");
-  // Inicializamos los sensores que lo necesiten
-  lastUpdate = timeClient.getFormattedTime();
-  readyForWeatherUpdate = false;
-  drawProgress(display, 100, "Done...");
+  drawProgress(90, "Updating astronomy...");
+  wunderground.updateAstronomy(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
+  //lastUpdate = timeClient.getFormattedTime();
+  //readyForWeatherUpdate = false;
+  drawProgress(100, "Done...");
   delay(1000);
+  tft.fillScreen(ILI9341_BLACK);
+  drawTime();
+  drawCurrentWeather();
+  drawForecast();
+  drawAstronomy();
 }
 //------------------------------------- -------------------------------------//
-void drawDateTime(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y)
+void updatePantalla() // Update the internet based information and update screen
 {
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(ArialMT_Plain_10);
+  switch (Pantalla)
+   {
+     case 0 : // Tiempo Exterior
+              tft.fillScreen(ILI9341_BLACK);
+              drawTime();
+              drawCurrentWeather();
+              drawForecast();
+              drawAstronomy();
+              Pantalla = 1;
+              break;
+     case 1 : // Tiempo Exterior
+              drawScrollBorrar();
+              drawTime();
+              drawForecastSensores();
+              Pantalla = 0;
+              break;
+   }
+}
+//------------------------------------- -------------------------------------//
+void drawProgress(uint8_t percentage, String text) // Progress bar helper
+{
+  ui.setTextAlignment(CENTER);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  tft.fillRect(0, 140, 240, 45, ILI9341_BLACK);
+  ui.drawString(120, 160, text);
+  ui.drawProgressBar(10, 165, 240 - 20, 15, percentage, ILI9341_WHITE, ILI9341_BLUE);
+}
+//------------------------------------- -------------------------------------//
+void drawTime() // draws the clock
+{
+  ui.setTextAlignment(CENTER);
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
   String date = wunderground.getDate();
-  int textWidth = display->getStringWidth(date);
-  display->drawString(64 + x, 5 + y, date);
-  display->setFont(ArialMT_Plain_24);
-  String time = timeClient.getFormattedTime();
-  textWidth = display->getStringWidth(time);
-  display->drawString(64 + x, 15 + y, time);
-  display->setTextAlignment(TEXT_ALIGN_LEFT);
-}
-//------------------------------------- -------------------------------------//
-void drawCurrentWeather(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y)
-{
-  display->setFont(ArialMT_Plain_10);
-  display->setTextAlignment(TEXT_ALIGN_LEFT);
-  display->drawString(60 + x, 5 + y, wunderground.getWeatherText());
+  ui.drawString(120, 20, date);
 
-  display->setFont(ArialMT_Plain_24);
-  String temp = wunderground.getCurrentTemp() + "°C";
-  display->drawString(60 + x, 15 + y, temp);
-  int tempWidth = display->getStringWidth(temp);
+  tft.setFont(&ArialRoundedMTBold_36);
+  String time = timeClient.getHours() + ":" + timeClient.getMinutes();
+  ui.drawString(120, 56, time);
+  drawSeparator(65);
+}
+//------------------------------------- -------------------------------------//
+void drawCurrentWeather() // draws current weather information
+{
+  // Weather Icon
+  String weatherIcon = getMeteoconIcon(wunderground.getTodayIcon());
+  ui.drawBmp(weatherIcon + ".bmp", 0, 55);
 
-  display->setFont(Meteocons_Plain_42);
-  String weatherIcon = wunderground.getTodayIcon();
-  int weatherIconWidth = display->getStringWidth(weatherIcon);
-  display->drawString(32 + x - weatherIconWidth / 2, 05 + y, weatherIcon);
+  // Weather Text
+  tft.setFont(&ArialRoundedMTBold_14);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  ui.setTextAlignment(RIGHT);
+  ui.drawString(220, 90, wunderground.getWeatherText());
+
+  tft.setFont(&ArialRoundedMTBold_36);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  ui.setTextAlignment(RIGHT);
+  String degreeSign = "F";
+  if (IS_METRIC)
+   {
+     degreeSign = "C";
+   }
+  String temp = wunderground.getCurrentTemp() + degreeSign;
+  ui.drawString(220, 125, temp);
+  drawSeparator(135);
 }
 //------------------------------------- -------------------------------------//
-void drawForecast(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y)
+void drawForecast() // draws the three forecast columns
 {
-  drawForecastDetails(display, x, y, 0);
-  drawForecastDetails(display, x + 44, y, 2);
-  drawForecastDetails(display, x + 88, y, 4);
+  drawForecastDetail(10, 165, 0);
+  drawForecastDetail(95, 165, 2);
+  drawForecastDetail(180, 165, 4);
+  drawSeparator(165 + 65 + 10);
 }
 //------------------------------------- -------------------------------------//
-void drawSensoresCasa(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y)
+void drawForecastSensores() // Escribe pantalla sensores internos
 {
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(ArialMT_Plain_10);
-  display->drawString(64 + x, 0 + y, "Casa");
-  display->setFont(ArialMT_Plain_16);
-  String h = String(dht.readHumidity());
-  String t = String(dht.readTemperature());
-  display->drawString(64 + x, 10 + y, t + "°C");
-  display->drawString(64 + x, 30 + y, h + "h.");
-  //Falta sens. presion y lluvia
+  drawForecastDetailSensores(40,  100, 0); // Temperatura
+  drawForecastDetailSensores(150, 100, 1); // Humedad
+  drawForecastDetailSensores(40 , 220, 2); // CO2
+  drawForecastDetailSensores(150, 220, 3); // Presion
+  drawSeparator(165 + 65 + 10);
 }
 //------------------------------------- -------------------------------------//
-void drawThingspeak(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y)
+void drawForecastDetail(uint16_t x, uint16_t y, uint8_t dayIndex) // helper for the forecast columns
 {
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(ArialMT_Plain_10);
-  display->drawString(64 + x, 0 + y, "Outdoor");
-  display->setFont(ArialMT_Plain_16);
-  display->drawString(64 + x, 10 + y, thingspeak.getFieldValue(0) + "°C");
-  display->drawString(64 + x, 30 + y, thingspeak.getFieldValue(1) + "%");
-}
-//------------------------------------- -------------------------------------//
-void drawForecastDetails(OLEDDisplay *display, int x, int y, int dayIndex)
-{
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(ArialMT_Plain_10);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  ui.setTextAlignment(CENTER);
   String day = wunderground.getForecastTitle(dayIndex).substring(0, 3);
   day.toUpperCase();
-  display->drawString(x + 20, y, day);
+  ui.drawString(x + 25, y, day);
 
-  display->setFont(Meteocons_Plain_21);
-  display->drawString(x + 20, y + 12, wunderground.getForecastIcon(dayIndex));
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  ui.drawString(x + 25, y + 14, wunderground.getForecastLowTemp(dayIndex) + "|" + wunderground.getForecastHighTemp(dayIndex));
 
-  display->setFont(ArialMT_Plain_10);
-  display->drawString(x + 20, y + 34, wunderground.getForecastLowTemp(dayIndex) + "|" + wunderground.getForecastHighTemp(dayIndex));
-  display->setTextAlignment(TEXT_ALIGN_LEFT);
+  String weatherIcon = getMeteoconIcon(wunderground.getForecastIcon(dayIndex));
+  ui.drawBmp("/mini/" + weatherIcon + ".bmp", x, y + 15);
 }
 //------------------------------------- -------------------------------------//
-void drawHeaderOverlay(OLEDDisplay *display, OLEDDisplayUiState* state)
+void drawForecastDetailSensores(uint16_t x, uint16_t y, uint8_t SensorIndex) // Lectura y escritura sensores internos
 {
-  display->setColor(WHITE);
-  display->setFont(ArialMT_Plain_10);
-  display->setTextAlignment(TEXT_ALIGN_LEFT);
-  display->drawString(0, 54, String(state->currentFrame + 1) + "/" + String(numberOfFrames));
+  String TipoSensor = "";
+  String TipoMedida = "";
 
-  String time = timeClient.getFormattedTime().substring(0, 5);
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->drawString(38, 54, time);
-
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  String temp = wunderground.getCurrentTemp() + "°C";
-  display->drawString(90, 54, temp);
-
-  int8_t quality = getWifiQuality();
-  for (int8_t i = 0; i < 4; i++)
+  switch(SensorIndex)
    {
-     for (int8_t j = 0; j < 2 * (i + 1); j++)
-      {
-        if (quality > i * 25 || j == 0) {
-          display->setPixel(120 + 2 * i, 63 - j);
-      }
-    }
+     case 0 : TipoSensor = "Temperatura";
+              TipoMedida = " ºC.";
+              break;
+     case 1 : TipoSensor = "Humedad";
+              TipoMedida = " %h.";
+              break;
+     case 2 : TipoSensor = " CO2 ";
+              TipoMedida = " CO2";
+              break;
+     case 3 : TipoSensor = " Presion";
+              TipoMedida = " hPa";
+              break;
    }
+  //TipoMedida = LecturaSensor(SensorIndex) + TipoMedida;
+  TipoMedida = "25" + TipoMedida;
 
 
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(Meteocons_Plain_10);
-  String weatherIcon = wunderground.getTodayIcon();
-  int weatherIconWidth = display->getStringWidth(weatherIcon);
-  display->drawString(64, 55, weatherIcon);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  ui.setTextAlignment(CENTER);
+  TipoSensor.toUpperCase();
+  ui.drawString(x + 25, y, TipoSensor);
 
-  display->drawHorizontalLine(0, 52, 128);
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+
+  ui.drawString(x + 25, y + 14, TipoMedida);
+  int icono = 24 * SensorIndex / 30.0;
+  ui.drawBmp("/moon" + String(icono) + ".bmp", x, y + 15);
+
+
+  String weatherIcon = getMeteoconIcon(wunderground.getForecastIcon(1));
+  ui.drawBmp("/mini/" + weatherIcon + ".bmp", x, y + 15);
 }
 //------------------------------------- -------------------------------------//
-void drawDormir(OLEDDisplay *display)
+void drawAstronomy() // draw moonphase and sunrise/set and moonrise/set
 {
-  display->clear();
-  display->setTextAlignment(TEXT_ALIGN_CENTER);
-  display->setFont(Meteocons_Plain_10);
-  display->drawString(64, 0, "Apagando");
-  display->display();
-  delay(2000);
-  display->displayOff();
+  int moonAgeImage = 24 * wunderground.getMoonAge().toInt() / 30.0;
+  ui.drawBmp("/moon" + String(moonAgeImage) + ".bmp", 120 - 30, 255);
+
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  ui.setTextAlignment(LEFT);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  ui.drawString(20, 270, "Sun");
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  ui.drawString(20, 285, wunderground.getSunriseTime());
+  ui.drawString(20, 300, wunderground.getSunsetTime());
+
+  ui.setTextAlignment(RIGHT);
+  ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+  ui.drawString(220, 270, "Moon");
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  ui.drawString(220, 285, wunderground.getMoonriseTime());
+  ui.drawString(220, 300, wunderground.getMoonsetTime());
 }
 //------------------------------------- -------------------------------------//
-int8_t getWifiQuality()  // converts the dBm to a range between 0 and 100%
+void drawDormir() // draws the clock
 {
-  int32_t dbm = WiFi.RSSI();
-  if(dbm <= -100)
+  tft.fillScreen(ILI9341_BLACK);
+
+  ui.setTextAlignment(CENTER);
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.setFont(&ArialRoundedMTBold_14);
+  String date = wunderground.getDate();
+  ui.drawString(120, 20, date);
+
+  tft.setFont(&ArialRoundedMTBold_36);
+  String time = timeClient.getHours() + ":" + timeClient.getMinutes();
+  ui.drawString(120, 56, time);
+  drawSeparator(65);
+
+  ui.setTextAlignment(CENTER);
+  tft.setFont(&ArialRoundedMTBold_14);
+  String texto = "Preparandose para dormir";
+  ui.drawString(120, 80, texto);
+  drawSeparator(100);
+}
+//------------------------------------- -------------------------------------//
+void drawScrollBorrar() // draws the clock
+{
+  int MargenSuperio  = 70;
+  int MargenInferior = 320;
+
+  ui.setTextAlignment(CENTER);
+  ui.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+
+  for (int i = MargenSuperio; i<= MargenInferior; i++)
    {
-     return 0;
+      tft.drawLine(0, i, 240, i, ILI9341_BLACK);
+      delay(10);                             // Segun como vaya el scroll
    }
-  else if(dbm >= -50)
-        {
-          return 100;
-        }
-       else
-        {
-          return 2 * (dbm + 100);
-        }
 }
 //------------------------------------- -------------------------------------//
-void setReadyForWeatherUpdate()
+String getMeteoconIcon(String iconText) // Helper function, should be part of the
+{                                       // weather station library and should disappear soon
+  if (iconText == "F") return "chanceflurries";
+  if (iconText == "Q") return "chancerain";
+  if (iconText == "W") return "chancesleet";
+  if (iconText == "V") return "chancesnow";
+  if (iconText == "S") return "chancetstorms";
+  if (iconText == "B") return "clear";
+  if (iconText == "Y") return "cloudy";
+  if (iconText == "F") return "flurries";
+  if (iconText == "M") return "fog";
+  if (iconText == "E") return "hazy";
+  if (iconText == "Y") return "mostlycloudy";
+  if (iconText == "H") return "mostlysunny";
+  if (iconText == "H") return "partlycloudy";
+  if (iconText == "J") return "partlysunny";
+  if (iconText == "W") return "sleet";
+  if (iconText == "R") return "rain";
+  if (iconText == "W") return "snow";
+  if (iconText == "B") return "sunny";
+  if (iconText == "0") return "tstorms";
+
+  return "unknown";
+}
+//------------------------------------- -------------------------------------//
+void drawSeparator(uint16_t y) // if you want separators, uncomment the tft-line
 {
-  Serial.println("Setting readyForUpdate to true");
-  readyForWeatherUpdate = true;
+   //tft.drawFastHLine(10, y, 240 - 2 * 10, 0x4228);
 }
 //------------------------------------- -------------------------------------//
